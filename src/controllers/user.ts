@@ -22,7 +22,11 @@ export const userController = {
       ? (req.query.order as any)
       : "desc";
 
-    const result = await userService.getAll(page, limit, sort, order);
+    const search = req.query.search
+      ? String(req.query.search)
+      : undefined;
+
+    const result = await userService.getAll({page, limit, sort, order, search});
 
     res.json(result);
   },
