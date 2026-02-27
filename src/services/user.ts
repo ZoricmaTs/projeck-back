@@ -1,11 +1,20 @@
 import { prisma } from "../lib/prisma.ts";
 import { Prisma } from "@prisma/client";
+import {redis} from '../lib/redis.ts';
 
 type SortField = "createdAt" | "name" | "email";
 type SortOrder = "asc" | "desc";
 
 export const userService = {
-  async getAll({page, limit, sort, order, search}: { page: number, limit: number, sort: SortField, order: SortOrder, search?: string | undefined}) {
+  async getAll({ page, limit, sort, order, search }: { page: number; limit: number; sort: SortField; order: SortOrder; search?: string | undefined }) {
+    const version = (await redis.get("users:version")) ?? "1";
+    const cacheKey = `users:v${version}:${page}:${limit}:${sort}:${order}:${search ?? ""}`;
+    const cached = await redis.get(cacheKey);
+
+    if (cached) {
+      return JSON.parse(cached);
+    }
+
     const skip = (page - 1) * limit;
 
     const where = search
@@ -39,7 +48,7 @@ export const userService = {
       prisma.user.count({ where }),
     ]);
 
-    return {
+    const result = {
       data: users,
       meta: {
         page,
@@ -51,10 +60,37 @@ export const userService = {
         search: search ?? null,
       },
     };
+
+    await redis.set(cacheKey, JSON.stringify(result), {
+      EX: 60,
+    });
+
+    return result;
+  },
+
+  async getById(id: string) {
+    const cacheKey = `user:${id}`;
+    const cached = await redis.get(cacheKey);
+
+    if (cached) {
+      return JSON.parse(cached);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+    });
+
+    if (!user) {
+      return null;
+    }
+
+    await redis.set(cacheKey, JSON.stringify(user), { EX: 60 });
+
+    return user;
   },
 
   async create(data: { name: string; email: string }) {
-    return prisma.user.create({
+    const result =  prisma.user.create({
       data,
       select: {
         id: true,
@@ -63,11 +99,37 @@ export const userService = {
         createdAt: true,
       },
     });
+
+    await redis.incr("users:version");
+
+    return result;
+  },
+
+  async update(id: string, data: { name?: string; email?: string }) {
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data,
+    });
+
+    await Promise.all([
+      redis.del(`user:${id}`),
+      redis.incr("users:version"),
+    ]);
+
+
+    return updatedUser;
   },
 
   async delete(id: string) {
-    return prisma.user.delete({
+    const deletedUser = await prisma.user.delete({
       where: { id },
     });
+
+    await Promise.all([
+      redis.del(`user:${id}`),
+      redis.incr("users:version"),
+    ]);
+
+    return deletedUser;
   },
 };

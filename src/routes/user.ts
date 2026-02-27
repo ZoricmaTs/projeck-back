@@ -8,10 +8,19 @@ const router = Router();
 
 router.get("/", catchAsync(userController.getUsers));
 
+router.get(/:id/, validate(userIdParamSchema, "params"), catchAsync(userController.getUser));
+
 router.post(
   "/",
   validate(createUserSchema),
   catchAsync(userController.createUser)
+);
+
+router.put(
+  "/:id",
+  validate(userIdParamSchema, "params"),
+  validate(createUserSchema),
+  catchAsync(userController.updateUser)
 );
 
 router.delete(
