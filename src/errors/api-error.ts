@@ -6,6 +6,10 @@ export class ApiError extends Error {
     this.status = status;
   }
 
+  static Unauthorized(msg: string) {
+    return new ApiError(401, msg);
+  }
+
   static BadRequest(msg: string) {
     return new ApiError(400, msg);
   }

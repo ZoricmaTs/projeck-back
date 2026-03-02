@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { userController } from "../controllers/user.ts";
 import { validate } from "../middlewares/validate.ts";
-import {createUserSchema, userIdParamSchema} from '../validators/user.js';
+import {createUserSchema, loginUserSchema, userIdParamSchema} from '../validators/user.js';
 import { catchAsync } from "../middlewares/catch-async.ts";
 
 const router = Router();
@@ -14,6 +14,12 @@ router.post(
   "/",
   validate(createUserSchema),
   catchAsync(userController.createUser)
+);
+
+router.post(
+  "/login",
+  validate(loginUserSchema),
+  catchAsync(userController.loginUser)
 );
 
 router.put(

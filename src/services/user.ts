@@ -1,6 +1,9 @@
 import { prisma } from "../lib/prisma.ts";
 import { Prisma } from "@prisma/client";
 import {redis} from '../lib/redis.ts';
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
+import {ApiError} from '../errors/api-error.js';
 
 type SortField = "createdAt" | "name" | "email";
 type SortOrder = "asc" | "desc";
@@ -89,13 +92,20 @@ export const userService = {
     return user;
   },
 
-  async create(data: { name: string; email: string }) {
+  async create(data: { name: string; email: string, password: string }) {
+    const hashedPassword = await bcrypt.hash(data.password, 10);
+
     const result =  prisma.user.create({
-      data,
+      data: {
+        name: data.name,
+        email: data.email,
+        password: hashedPassword,
+      },
       select: {
         id: true,
         name: true,
         email: true,
+        password: true,
         createdAt: true,
       },
     });
@@ -103,6 +113,31 @@ export const userService = {
     await redis.incr("users:version");
 
     return result;
+  },
+
+  async login({email, password}: {email: string, password: string}) {
+    const user = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      throw ApiError.NotFound("Invalid email or password");
+    }
+
+    const isValid = await bcrypt.compare(password, user.password);
+
+    if (!isValid) {
+      throw ApiError.NotFound("Invalid email or password");
+    }
+
+    const token = jwt.sign(
+      { userId: user.id },
+      process.env.JWT_SECRET!,
+      { expiresIn: "1d" }
+    );
+
+
+    return token;
   },
 
   async update(id: string, data: { name?: string; email?: string }) {

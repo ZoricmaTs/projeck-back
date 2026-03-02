@@ -19,6 +19,10 @@ export const userController = {
     res.json(result);
   },
 
+  async checkAuth(req: Request, res: Response) {
+    res.json({ message: "Authenticated" });
+  },
+
   async getUser(req: Request, res: Response) {
     const { id } = req.params;
 
@@ -36,14 +40,25 @@ export const userController = {
   },
 
   async createUser(req: Request, res: Response) {
-    const { name, email } = req.body;
+    const { name, email, password } = req.body;
 
-    if (!name || !email) {
-      throw ApiError.BadRequest("Name and email are required");
+    if (!name || !email || !password) {
+      throw ApiError.BadRequest("Name, email and password are required");
     }
 
-    const newUser = await userService.create({ name, email });
+    const newUser = await userService.create({ name, email, password });
     res.status(201).json(newUser);
+  },
+
+  async loginUser(req: Request, res: Response) {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      throw ApiError.BadRequest("Email and password are required");
+    }
+
+    const token = await userService.login({ email, password });
+    res.json({ token });
   },
 
   async updateUser(req: Request, res: Response) {
