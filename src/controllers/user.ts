@@ -57,8 +57,9 @@ export const userController = {
       throw ApiError.BadRequest("Email and password are required");
     }
 
-    const token = await userService.login({ email, password });
-    res.json({ token });
+    const data = await userService.login({ email, password });
+
+    res.json(data);
   },
 
   async updateUser(req: Request, res: Response) {

@@ -137,7 +137,15 @@ export const userService = {
     );
 
 
-    return token;
+    return {
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        createdAt: user.createdAt,
+      }
+    };
   },
 
   async update(id: string, data: { name?: string; email?: string }) {
