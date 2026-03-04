@@ -2,8 +2,8 @@ import { prisma } from "../lib/prisma.ts";
 import { Prisma } from "@prisma/client";
 import {redis} from '../lib/redis.ts';
 import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
 import {ApiError} from '../errors/api-error.js';
+import {generateTokens} from '../utils/refresh-token.js';
 
 type SortField = "createdAt" | "name" | "email";
 type SortOrder = "asc" | "desc";
@@ -130,15 +130,15 @@ export const userService = {
       throw ApiError.NotFound("Invalid email or password");
     }
 
-    const token = jwt.sign(
-      { userId: user.id },
-      process.env.JWT_SECRET!,
-      { expiresIn: "1d" }
-    );
-
+    const {accessToken, refreshToken} = generateTokens(user.id);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken },
+    });
 
     return {
-      token,
+      accessToken,
+      refreshToken,
       user: {
         id: user.id,
         name: user.name,

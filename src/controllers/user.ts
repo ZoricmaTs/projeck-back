@@ -1,6 +1,8 @@
 import type { Request, Response } from "express";
 import { userService } from "../services/user.ts";
 import { ApiError } from "../errors/api-error.ts";
+import {generateTokens} from '../utils/refresh-token.js';
+import jwt from 'jsonwebtoken';
 
 type DeleteUserParams = {
   id: string;
@@ -57,9 +59,55 @@ export const userController = {
       throw ApiError.BadRequest("Email and password are required");
     }
 
-    const data = await userService.login({ email, password });
+    const { accessToken, refreshToken, user } = await userService.login({ email, password });
 
-    res.json(data);
+    // 👇 СТАВИМ REFRESH В COOKIE
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: false,      // локально false
+      sameSite: "lax",    // для localhost
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    res.json({
+      accessToken,
+      user,
+    });
+  },
+
+  async refresh(req: Request, res: Response) {
+    const token = req.cookies.refreshToken;
+
+    if (!token) {
+      throw ApiError.Unauthorized("Refresh token is required");
+    }
+
+    try {
+      const payload = jwt.verify(
+        token,
+        process.env.JWT_REFRESH_SECRET!
+      ) as { userId: string };
+
+      const { accessToken, refreshToken } = generateTokens(payload.userId);
+
+      // Ротация refresh токена
+      res.cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        secure: false,
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
+      res.json({ accessToken });
+    } catch {
+      throw ApiError.Unauthorized("Invalid refresh token");
+    }
+  },
+
+  async logout(req: Request, res: Response) {
+    res.clearCookie("refreshToken");
+
+    res.json({ message: "Logged out" });
   },
 
   async updateUser(req: Request, res: Response) {
