@@ -18,11 +18,14 @@ export const userController = {
       search: req.query.search as string | undefined,
     });
 
-    res.json(result);
-  },
+    result.data = result.data.map((user: { id: string; name: string; email: string; createdAt: Date; }) => ({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      createdAt: user.createdAt,
+    }));
 
-  async checkAuth(req: Request, res: Response) {
-    res.json({ message: "Authenticated" });
+    res.json(result);
   },
 
   async getUser(req: Request, res: Response) {
@@ -35,7 +38,7 @@ export const userController = {
     const user = await userService.getById(id as string);
 
     if (!user) {
-      throw ApiError.NotFound("User not found");
+      throw ApiError.NotFound("User not found", { id: "User does not exist" });
     }
 
     res.json(user);
@@ -45,18 +48,32 @@ export const userController = {
     const { name, email, password } = req.body;
 
     if (!name || !email || !password) {
-      throw ApiError.BadRequest("Name, email and password are required");
+      throw ApiError.BadRequest("Name, email and password are required", {
+        name: "Name is required",
+        email: "Email is required",
+        password: "Password is required",
+      });
     }
 
     const newUser = await userService.create({ name, email, password });
-    res.status(201).json(newUser);
+    const result = {
+      id: newUser.id,
+      name: newUser.name,
+      email: newUser.email,
+      createdAt: newUser.createdAt,
+    };
+
+    res.status(201).json(result);
   },
 
   async loginUser(req: Request, res: Response) {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      throw ApiError.BadRequest("Email and password are required");
+      throw ApiError.BadRequest("Email and password are required", {
+        email: "Email is required",
+        password: "Password is required",
+      });
     }
 
     const { accessToken, refreshToken, user } = await userService.login({ email, password });

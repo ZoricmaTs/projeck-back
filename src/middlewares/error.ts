@@ -10,7 +10,10 @@ export const errorHandler = (
   console.error(err);
 
   if (err instanceof ApiError) {
-    return res.status(err.status).json({ message: err.message });
+    return res.status(err.status).json({
+      message: err.message,
+      errors: err.errors || null,
+    });
   }
 
   return res.status(500).json({ message: "Internal Server Error" });

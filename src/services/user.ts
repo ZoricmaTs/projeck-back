@@ -93,26 +93,35 @@ export const userService = {
   },
 
   async create(data: { name: string; email: string, password: string }) {
-    const hashedPassword = await bcrypt.hash(data.password, 10);
+    try {
+      const hashedPassword = await bcrypt.hash(data.password, 10);
+      const result = await prisma.user.create({
+        data: {
+          name: data.name,
+          email: data.email,
+          password: hashedPassword,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          password: true,
+          createdAt: true,
+        },
+      });
 
-    const result =  prisma.user.create({
-      data: {
-        name: data.name,
-        email: data.email,
-        password: hashedPassword,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        password: true,
-        createdAt: true,
-      },
-    });
+      await redis.incr("users:version");
 
-    await redis.incr("users:version");
-
-    return result;
+      return result;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw ApiError.BadRequest("User with this email already exists", {
+          email: "Email must be unique",
+        });
+      } else {
+        throw error;
+      }
+    }
   },
 
   async login({email, password}: {email: string, password: string}) {
@@ -121,16 +130,21 @@ export const userService = {
     });
 
     if (!user) {
-      throw ApiError.NotFound("Invalid email or password");
+      throw ApiError.NotFound("Invalid email or password", {
+          email: "No user found with this email",
+      });
     }
 
     const isValid = await bcrypt.compare(password, user.password);
 
     if (!isValid) {
-      throw ApiError.NotFound("Invalid email or password");
+      throw ApiError.NotFound("Invalid email or password", {
+        password: "Incorrect password or email",
+      });
     }
 
     const {accessToken, refreshToken} = generateTokens(user.id);
+
     await prisma.user.update({
       where: { id: user.id },
       data: { refreshToken },
@@ -158,7 +172,6 @@ export const userService = {
       redis.del(`user:${id}`),
       redis.incr("users:version"),
     ]);
-
 
     return updatedUser;
   },
