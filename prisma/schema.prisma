@@ -7,11 +7,46 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum ValidationStatus {
+  PENDING   // видео загружено, но ещё не проверено
+  VALID     // видео прошло проверку
+  INVALID   // видео не прошло проверку
+  QUEUED // видео поставлено в очередь на проверку
+  PROCESSING // видео проходит проверку
+  READY // видео прошло проверку и готово к просмотру
+  FAILED // видео не прошло проверку и не готово к просмотру, возможно из-за ошибки при загрузке или обработки
+}
+
 model User {
   id        String   @id @default(uuid())
   name      String
   email     String   @unique
   password  String
   refreshToken String?
+  createdAt DateTime @default(now())
+}
+
+model Video {
+  id               String           @id @default(uuid())
+  title            String
+  description      String?
+  url              String
+  createdAt        DateTime         @default(now())
+  codec            String?
+  duration         Int?
+  width            Int?
+  height           Int?
+  validationStatus ValidationStatus @default(PENDING)
+  processedVideos String[]
+}
+
+model ProcessedVideo {
+  id String @id @default(uuid())
+  videoId String
+  url String
+  codec String
+  width Int
+  height Int
+  duration Int
   createdAt DateTime @default(now())
 }

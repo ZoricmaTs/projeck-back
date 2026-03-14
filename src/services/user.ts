@@ -1,9 +1,10 @@
 import { prisma } from "../lib/prisma.ts";
-import { Prisma } from "@prisma/client";
 import {redis} from '../lib/redis.ts';
 import bcrypt from "bcrypt";
 import {ApiError} from '../errors/api-error.js';
 import {generateTokens} from '../utils/refresh-token.js';
+import {PrismaClientKnownRequestError} from '@prisma/client/runtime/client';
+
 
 type SortField = "createdAt" | "name" | "email";
 type SortOrder = "asc" | "desc";
@@ -26,13 +27,13 @@ export const userService = {
           {
             name: {
               contains: search,
-              mode: Prisma.QueryMode.insensitive,
+              mode: "insensitive",
             },
           },
           {
             email: {
               contains: search,
-              mode: Prisma.QueryMode.insensitive,
+              mode: "insensitive",
             },
           },
         ],
@@ -114,7 +115,7 @@ export const userService = {
 
       return result;
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      if (error instanceof PrismaClientKnownRequestError && error.code === "P2002") {
         throw ApiError.BadRequest("User with this email already exists", {
           email: "Email must be unique",
         });
