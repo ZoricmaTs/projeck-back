@@ -1,12 +1,13 @@
 import { PrismaClient, ValidationStatus, type Video } from "@prisma/client";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import {s3Client, videoService} from '../services/r2Client.js';
 import type {Request, Response} from 'express';
 import path from "path";
 import type {FfprobeData, FfprobeStream} from 'fluent-ffmpeg';
 import ffmpeg from "fluent-ffmpeg"
 import fs from 'fs';
+import {ApiError} from '../errors/api-error.js';
 
 const prisma = new PrismaClient()
 
@@ -147,6 +148,17 @@ export async function processVideo(video: Video | null) {
   }
 }
 
+export async function getVideoUrl(key: string) {
+  const command = new GetObjectCommand({
+    Bucket: process.env.R2_BUCKET!,
+    Key: key
+  });
+
+  return await getSignedUrl(s3Client, command, {
+    expiresIn: 3600
+  });
+}
+
 export const videoController = {
   createUploadUrl: async (req: Request, res: Response) => {
     const { filename, title } = req.body;
@@ -165,9 +177,7 @@ export const videoController = {
 
     await prisma.video.update({
       where: { id: videoId as string },
-      data: {
-        validationStatus: ValidationStatus.QUEUED
-      }
+      data: { validationStatus: ValidationStatus.QUEUED }
     });
 
     await maybeStartProcessing();
@@ -186,4 +196,38 @@ export const videoController = {
 
     return res.json({ status: video.validationStatus });
   },
+
+  getVideo: async (req: Request, res: Response) => {
+    const { videoId } = req.params;
+
+    const video = await prisma.video.findFirst({
+      where: {
+        id: videoId as string ,
+        validationStatus: ValidationStatus.READY
+      },
+    });
+
+    if (!video) {
+      return ApiError.NotFound("Video not found");
+    }
+
+    const processedVideos = await prisma.processedVideo.findMany({
+      where: {
+        id: { in: video.processedVideos }
+      }
+    });
+
+    const resolvedUrls = await Promise.all(processedVideos.map(p => getVideoUrl(p.url)));
+
+    processedVideos.forEach((v, index) => {
+      v.url = resolvedUrls[index]!;
+    })
+
+    const result = {
+      ...video,
+      processedVideos,
+    };
+
+    return res.json(result);
+  }
 }
