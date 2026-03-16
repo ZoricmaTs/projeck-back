@@ -1,4 +1,4 @@
-import { PrismaClient, ValidationStatus } from "@prisma/client";
+import { PrismaClient, ValidationStatus, type Video } from "@prisma/client";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import {s3Client, videoService} from '../services/r2Client.js';
@@ -13,32 +13,49 @@ const prisma = new PrismaClient()
 let isProcessing = false;
 
 export async function maybeStartProcessing() {
-  if (isProcessing) {
-    return;
-  }
+  if (isProcessing) return
 
-  isProcessing = true;
-
-  const video = await prisma.video.findFirst({
-    where: { validationStatus: ValidationStatus.QUEUED },
-    orderBy: { createdAt: "asc" }
-  });
+  isProcessing = true
 
   try {
+    const video = await prisma.video.findFirst({
+      where: { validationStatus: ValidationStatus.QUEUED },
+      orderBy: { createdAt: "asc" }
+    });
+
     if (!video) {
-      isProcessing = false;
       return;
     }
 
+    await prisma.video.update({
+      where: { id: video.id },
+      data: { validationStatus: ValidationStatus.PROCESSING }
+    });
+
+    await processVideo(video);
+
+  } catch (err) {
+    console.error(err)
+  } finally {
+    isProcessing = false
+    await maybeStartProcessing();
+  }
+}
+
+export async function processVideo(video: Video | null) {
+  if (!video) {
+    return;
+  }
+
+  try {
     const localPath = path.join("uploads", video.url);
     // Скачиваем видео с R2
     await videoService.downloadVideo(video.url, localPath);
 
     const metadata: FfprobeData = await new Promise((res, rej) =>
-      ffmpeg.ffprobe(localPath, (err, data) => (err ? rej(err) : res(data)))
+      ffmpeg.ffprobe(localPath, (err, data) => err ? rej(err) : res(data))
     );
 
-    console.log("Video metadata", metadata);
     // Валидация
     const vStream: FfprobeStream | undefined = metadata.streams.find(s => s.codec_type === "video");
     if (!vStream || !["h264","vp8","vp9"].includes(vStream.codec_name!) || metadata.format.duration! > 600) {
@@ -47,8 +64,7 @@ export async function maybeStartProcessing() {
         data: { validationStatus: ValidationStatus.INVALID }
       });
 
-      fs.unlinkSync(localPath);
-      isProcessing = false;
+      await fs.promises.unlink(localPath);
 
       return;
     }
@@ -57,7 +73,7 @@ export async function maybeStartProcessing() {
     await prisma.video.update({
       where: { id: video.id },
       data: {
-        validationStatus: ValidationStatus.VALID,
+        validationStatus: ValidationStatus.PROCESSING,
         codec: vStream.codec_name!,
         duration: Math.floor(metadata.format.duration!),
         width: vStream.width!,
@@ -91,8 +107,10 @@ export async function maybeStartProcessing() {
       // Загружаем на R2
       await videoService.uploadVideo(outPath, processedUrl);
 
-      // Удаляем локальный файл
-      fs.unlinkSync(outPath);
+      if (fs.existsSync(outPath)) {
+        // Удаляем локальный файл
+        await fs.promises.unlink(outPath);
+      }
 
       const processedVideo = await prisma.processedVideo.create({
         data: {
@@ -109,7 +127,7 @@ export async function maybeStartProcessing() {
     }
 
     // Удаляем исходный локальный файл
-    fs.unlinkSync(localPath);
+    await fs.promises.unlink(localPath);
 
     // Обновляем запись видео с массивом processed URLs
     await prisma.video.update({
@@ -119,18 +137,15 @@ export async function maybeStartProcessing() {
         validationStatus: ValidationStatus.READY,
       }
     });
-
   } catch (err) {
-    console.error("Error processing video:", err);
+    console.error(err)
+
     await prisma.video.update({
-      where: { id: video!.id },
+      where: { id: video.id },
       data: { validationStatus: ValidationStatus.INVALID }
-    });
-  } finally {
-    isProcessing = false;
+    })
   }
 }
-
 
 export const videoController = {
   createUploadUrl: async (req: Request, res: Response) => {
@@ -169,6 +184,6 @@ export const videoController = {
       return res.status(404).json({ error: "Video not found" });
     }
 
-    return res.json({ processed: video.validationStatus === ValidationStatus.READY });
-  }
+    return res.json({ status: video.validationStatus });
+  },
 }

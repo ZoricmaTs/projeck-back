@@ -4,6 +4,9 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import {errorHandler} from './middlewares/error.js';
 import videoRoutes from './routes/video.ts';
+import fs from "fs"
+import {maybeStartProcessing} from './controllers/video.js';
+
 const app = express();
 
 app.use(express.json());
@@ -31,4 +34,9 @@ app.use(errorHandler);
 
 app.listen(3000, () => {
   console.log("Server running on http://localhost:3000");
+  if (!fs.existsSync("uploads")) {
+    fs.mkdirSync("uploads");
+  }
+
+  maybeStartProcessing();
 });
