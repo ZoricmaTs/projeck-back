@@ -14,32 +14,34 @@ const prisma = new PrismaClient()
 let isProcessing = false;
 
 export async function maybeStartProcessing() {
-  if (isProcessing) return
+  if (isProcessing) {
+    return;
+  }
 
-  isProcessing = true
+  isProcessing = true;
 
   try {
-    const video = await prisma.video.findFirst({
-      where: { validationStatus: ValidationStatus.QUEUED },
-      orderBy: { createdAt: "asc" }
-    });
+    while (true) {
+      const video = await prisma.video.findFirst({
+        where: { validationStatus: ValidationStatus.QUEUED },
+        orderBy: { createdAt: "asc" }
+      });
 
-    if (!video) {
-      return;
+      if (!video) {
+        break;
+      }
+
+      await prisma.video.update({
+        where: { id: video.id },
+        data: { validationStatus: ValidationStatus.PROCESSING }
+      });
+
+      await processVideo(video);
     }
-
-    await prisma.video.update({
-      where: { id: video.id },
-      data: { validationStatus: ValidationStatus.PROCESSING }
-    });
-
-    await processVideo(video);
-
   } catch (err) {
-    console.error(err)
+    console.error(err);
   } finally {
-    isProcessing = false
-    await maybeStartProcessing();
+    isProcessing = false;
   }
 }
 
