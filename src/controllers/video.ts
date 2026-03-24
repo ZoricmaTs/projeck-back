@@ -121,7 +121,7 @@ export async function processVideo(video: Video | null) {
           url: processedUrl,
           width: q.width,
           height: q.height,
-          duration: Math.floor(metadata.format.duration!),
+          duration: metadata.format.duration!,
           codec: vStream.codec_name!,
         }
       });
