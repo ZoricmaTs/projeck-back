@@ -37,16 +37,17 @@ model Video {
   width            Int?
   height           Int?
   validationStatus ValidationStatus @default(PENDING)
-  processedVideos String[]
+  processedVideos  ProcessedVideo[]
 }
 
 model ProcessedVideo {
-  id String @id @default(uuid())
-  videoId String
-  url String
-  codec String
-  width Int
-  height Int
-  duration Int
-  createdAt DateTime @default(now())
+  id                String @id @default(uuid())
+  videoId           String
+  video             Video    @relation(fields: [videoId], references: [id])
+  url               String
+  codec             String
+  width             Int
+  height            Int
+  duration          Int
+  createdAt         DateTime @default(now())
 }

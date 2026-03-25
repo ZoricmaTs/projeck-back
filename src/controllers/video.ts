@@ -9,7 +9,7 @@ import ffmpeg from "fluent-ffmpeg"
 import fs from 'fs';
 import {ApiError} from '../errors/api-error.js';
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient();
 
 let isProcessing = false;
 
@@ -72,7 +72,6 @@ export async function processVideo(video: Video | null) {
       return;
     }
 
-    // Обновляем метаданные видео
     await prisma.video.update({
       where: { id: video.id },
       data: {
@@ -81,7 +80,9 @@ export async function processVideo(video: Video | null) {
         duration: Math.floor(metadata.format.duration!),
         width: vStream.width!,
         height: vStream.height!,
-        processedVideos: [],
+        processedVideos: {
+          set: []
+        }
       }
     });
 
@@ -90,8 +91,6 @@ export async function processVideo(video: Video | null) {
       { suffix: "720p", width: 1280, height: 720 },
       { suffix: "480p", width: 854, height: 480 }
     ];
-
-    const processedIds: string[] = [];
 
     for (const q of qualities) {
       const outPath = path.join("uploads", `${video.id}_${q.suffix}.mp4`);
@@ -115,7 +114,7 @@ export async function processVideo(video: Video | null) {
         await fs.promises.unlink(outPath);
       }
 
-      const processedVideo = await prisma.processedVideo.create({
+      await prisma.processedVideo.create({
         data: {
           videoId: video.id,
           url: processedUrl,
@@ -125,8 +124,6 @@ export async function processVideo(video: Video | null) {
           codec: vStream.codec_name!,
         }
       });
-
-      processedIds.push(processedVideo.id);
     }
 
     // Удаляем исходный локальный файл
@@ -136,7 +133,6 @@ export async function processVideo(video: Video | null) {
     await prisma.video.update({
       where: { id: video.id },
       data: {
-        processedVideos: processedIds,
         validationStatus: ValidationStatus.READY,
       }
     });
@@ -204,32 +200,28 @@ export const videoController = {
 
     const video = await prisma.video.findFirst({
       where: {
-        id: videoId as string ,
+        id: videoId as string,
         validationStatus: ValidationStatus.READY
       },
-    });
-
-    if (!video) {
-      return ApiError.NotFound("Video not found");
-    }
-
-    const processedVideos = await prisma.processedVideo.findMany({
-      where: {
-        id: { in: video.processedVideos }
+      include: {
+        processedVideos: true
       }
     });
 
-    const resolvedUrls = await Promise.all(processedVideos.map(p => getVideoUrl(p.url)));
+    if (!video) {
+      throw ApiError.NotFound("Video not found");
+    }
 
-    processedVideos.forEach((v, index) => {
-      v.url = resolvedUrls[index]!;
-    })
+    const resolvedUrls = await Promise.all(video.processedVideos.map(p => getVideoUrl(p.url)));
 
-    const result = {
+    const processedVideosWithUrls = video.processedVideos.map((v, i) => ({
+      ...v,
+      url: resolvedUrls[i]!
+    }));
+
+    return res.json({
       ...video,
-      processedVideos,
-    };
-
-    return res.json(result);
+      processedVideos: processedVideosWithUrls
+    });
   }
 }
