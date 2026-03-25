@@ -50,8 +50,10 @@ export async function processVideo(video: Video | null) {
     return;
   }
 
+  const localPath = path.join("uploads", video.url);
+  const hlsDir = path.join("uploads", video.id);
+
   try {
-    const localPath = path.join("uploads", video.url);
     // Скачиваем видео с R2
     await videoService.downloadVideo(video.url, localPath);
 
@@ -61,7 +63,8 @@ export async function processVideo(video: Video | null) {
 
     // Валидация
     const vStream: FfprobeStream | undefined = metadata.streams.find(s => s.codec_type === "video");
-    if (!vStream || !["h264","vp8","vp9"].includes(vStream.codec_name!) || metadata.format.duration! > 600) {
+
+    if (!vStream || !["h264", "vp8", "vp9"].includes(vStream.codec_name!) || metadata.format.duration! > 600) {
       await prisma.video.update({
         where: { id: video.id },
         data: { validationStatus: ValidationStatus.INVALID }
@@ -80,53 +83,60 @@ export async function processVideo(video: Video | null) {
         duration: Math.floor(metadata.format.duration!),
         width: vStream.width!,
         height: vStream.height!,
-        processedVideos: {
-          set: []
-        }
       }
     });
 
-    // Создаём версии видео
     const qualities = [
-      { suffix: "720p", width: 1280, height: 720 },
-      { suffix: "480p", width: 854, height: 480 }
+      { name: "720p", width: 1280, height: 720, bitrate: "2500k" },
+      { name: "480p", width: 854, height: 480, bitrate: "1000k" }
     ];
 
-    for (const q of qualities) {
-      const outPath = path.join("uploads", `${video.id}_${q.suffix}.mp4`);
-      const processedUrl = `processed/${video.id}_${q.suffix}.mp4`;
 
-      // ffmpeg кодирование
+    //папка под HLS
+    const hlsFolder = path.join("uploads", `hls_${video.id}`);
+
+    if (!fs.existsSync(hlsFolder)) {
+      fs.mkdirSync(hlsFolder);
+    }
+
+    // ffmpeg кодирование
+    for (const q of qualities) {
+      const segmentPattern = path.join(hlsFolder, `${q.name}_%03d.ts`);
+      const playlistPath = path.join(hlsFolder, `${q.name}.m3u8`);
+
       await new Promise<void>((res, rej) => {
         ffmpeg(localPath)
-          .outputOptions(`-vf scale=${q.width}:${q.height}`)
-          .output(outPath)
+          .outputOptions([
+            "-preset", "veryfast",
+            "-g", "48",
+            "-sc_threshold", "0",
+            "-vf", `scale=${q.width}:${q.height}`,
+            "-c:v", "libx264",
+            "-b:v", q.bitrate,
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-f", "hls",
+            "-hls_time", "4",
+            "-hls_playlist_type", "vod",
+            "-hls_segment_filename", segmentPattern
+          ])
+          .output(playlistPath)
           .on("end", () => res())
           .on("error", (err) => rej(err))
           .run();
       });
-
-      // Загружаем на R2
-      await videoService.uploadVideo(outPath, processedUrl);
-
-      if (fs.existsSync(outPath)) {
-        // Удаляем локальный файл
-        await fs.promises.unlink(outPath);
-      }
-
-      await prisma.processedVideo.create({
-        data: {
-          videoId: video.id,
-          url: processedUrl,
-          width: q.width,
-          height: q.height,
-          duration: metadata.format.duration!,
-          codec: vStream.codec_name!,
-        }
-      });
     }
 
-    // Удаляем исходный локальный файл
+    const masterPlaylist = qualities.map(q =>
+      `#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate.replace("k","000")},RESOLUTION=${q.width}x${q.height}\n${q.name}.m3u8`
+    ).join("\n");
+
+    await fs.promises.writeFile(path.join(hlsFolder, "master.m3u8"), `#EXTM3U\n${masterPlaylist}`);
+
+    // Загружаем на R2
+    await videoService.uploadHLSFolder(hlsFolder, `hls/${video.id}`);
+
+    fs.rmSync(hlsFolder, { recursive: true, force: true });
     await fs.promises.unlink(localPath);
 
     // Обновляем запись видео с массивом processed URLs
@@ -134,6 +144,7 @@ export async function processVideo(video: Video | null) {
       where: { id: video.id },
       data: {
         validationStatus: ValidationStatus.READY,
+        hlsUrl: `hls/${video.id}/master.m3u8`
       }
     });
   } catch (err) {
@@ -143,6 +154,14 @@ export async function processVideo(video: Video | null) {
       where: { id: video.id },
       data: { validationStatus: ValidationStatus.INVALID }
     })
+  } finally {
+    if (fs.existsSync(localPath)) {
+      await fs.promises.unlink(localPath);
+    }
+
+    if (fs.existsSync(hlsDir)) {
+      await fs.promises.rm(hlsDir, { recursive: true, force: true });
+    }
   }
 }
 
@@ -202,9 +221,6 @@ export const videoController = {
       where: {
         id: videoId as string,
         validationStatus: ValidationStatus.READY
-      },
-      include: {
-        processedVideos: true
       }
     });
 
@@ -212,16 +228,17 @@ export const videoController = {
       throw ApiError.NotFound("Video not found");
     }
 
-    const resolvedUrls = await Promise.all(video.processedVideos.map(p => getVideoUrl(p.url)));
-
-    const processedVideosWithUrls = video.processedVideos.map((v, i) => ({
-      ...v,
-      url: resolvedUrls[i]!
-    }));
+    const hlsUrl = await getVideoUrl(video.hlsUrl!);
 
     return res.json({
-      ...video,
-      processedVideos: processedVideosWithUrls
+      id: video.id,
+      title: video.title,
+      description: video.description,
+      hlsUrl: hlsUrl,
+      duration: video.duration,
+      width: video.width,
+      height: video.height,
+      codec: video.codec,
     });
   }
 }

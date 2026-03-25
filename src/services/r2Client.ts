@@ -1,5 +1,6 @@
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import fs from "fs";
+import path from 'path';
 
 export const s3Client = new S3Client({
   region: "auto",
@@ -24,8 +25,36 @@ export const videoService = {
 
   async uploadVideo(localPath: string, key: string) {
     const fileStream = fs.createReadStream(localPath);
-    const command = new PutObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: key, Body: fileStream });
+
+    let contentType = "application/octet-stream";
+
+    if (key.endsWith(".m3u8")) {
+      contentType = "application/vnd.apple.mpegurl";
+    } else if (key.endsWith(".ts")) {
+      contentType = "video/mp2t";
+    }
+
+    const command = new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET!,
+      Key: key,
+      Body: fileStream,
+      ContentType: contentType
+    });
 
     await s3Client.send(command);
+  },
+
+
+  async uploadHLSFolder(localDir: string, remotePrefix: string) {
+    const files = await fs.promises.readdir(localDir);
+
+    for (const file of files) {
+      const fullPath = path.join(localDir, file);
+
+      const stat = await fs.promises.stat(fullPath);
+      if (stat.isDirectory()) continue;
+
+      await this.uploadVideo(fullPath, `${remotePrefix}/${file}`);
+    }
   }
 };
