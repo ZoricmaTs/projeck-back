@@ -139,7 +139,6 @@ export async function processVideo(video: Video | null) {
     fs.rmSync(hlsFolder, { recursive: true, force: true });
     await fs.promises.unlink(localPath);
 
-    // Обновляем запись видео с массивом processed URLs
     await prisma.video.update({
       where: { id: video.id },
       data: {
@@ -165,16 +164,16 @@ export async function processVideo(video: Video | null) {
   }
 }
 
-export async function getVideoUrl(key: string) {
-  const command = new GetObjectCommand({
-    Bucket: process.env.R2_BUCKET!,
-    Key: key
-  });
-
-  return await getSignedUrl(s3Client, command, {
-    expiresIn: 3600
-  });
-}
+// export async function getVideoUrl(key: string) {
+//   const command = new GetObjectCommand({
+//     Bucket: process.env.R2_BUCKET!,
+//     Key: key
+//   });
+//
+//   return await getSignedUrl(s3Client, command, {
+//     expiresIn: 3600
+//   });
+// }
 
 export const videoController = {
   createUploadUrl: async (req: Request, res: Response) => {
@@ -228,13 +227,11 @@ export const videoController = {
       throw ApiError.NotFound("Video not found");
     }
 
-    const hlsUrl = await getVideoUrl(video.hlsUrl!);
-
     return res.json({
       id: video.id,
       title: video.title,
       description: video.description,
-      hlsUrl: hlsUrl,
+      hlsUrl: `https://pub-${process.env.R2_PUBLIC}.r2.dev/${video.hlsUrl}`,
       duration: video.duration,
       width: video.width,
       height: video.height,
