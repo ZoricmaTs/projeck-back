@@ -52,9 +52,27 @@ export const videoService = {
       const fullPath = path.join(localDir, file);
 
       const stat = await fs.promises.stat(fullPath);
-      if (stat.isDirectory()) continue;
+      if (stat.isDirectory()) {
+        continue;
+      }
 
       await this.uploadVideo(fullPath, `${remotePrefix}/${file}`);
+    }
+  },
+
+  async uploadFolder(localDir: string, remotePrefix: string) {
+    const files = await fs.promises.readdir(localDir);
+
+    for (const file of files) {
+      const fullPath = path.join(localDir, file);
+
+      const stat = await fs.promises.stat(fullPath);
+
+      if (stat.isDirectory()) {
+        await videoService.uploadFolder(fullPath, `${remotePrefix}/${file}`);
+      } else {
+        await videoService.uploadVideo(fullPath, `${remotePrefix}/${file}`);
+      }
     }
   }
 };

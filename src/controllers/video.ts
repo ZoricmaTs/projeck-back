@@ -1,6 +1,6 @@
 import { PrismaClient, ValidationStatus, type Video } from "@prisma/client";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
 import {s3Client, videoService} from '../services/r2Client.js';
 import type {Request, Response} from 'express';
 import path from "path";
@@ -8,6 +8,7 @@ import type {FfprobeData, FfprobeStream} from 'fluent-ffmpeg';
 import ffmpeg from "fluent-ffmpeg"
 import fs from 'fs';
 import {ApiError} from '../errors/api-error.js';
+import {generateVTT} from '../utils/generate-vtt.js';
 
 const prisma = new PrismaClient();
 
@@ -136,16 +137,27 @@ export async function processVideo(video: Video | null) {
     // Загружаем на R2
     await videoService.uploadHLSFolder(hlsFolder, `hls/${video.id}`);
 
-    fs.rmSync(hlsFolder, { recursive: true, force: true });
-    await fs.promises.unlink(localPath);
-
     await prisma.video.update({
       where: { id: video.id },
       data: {
-        validationStatus: ValidationStatus.READY,
         hlsUrl: `hls/${video.id}/master.m3u8`
       }
     });
+
+    try {
+      const hlsInput = path.join(hlsFolder, "720p.m3u8");
+
+      const thumbs = await videoController.generateThumbnails(hlsInput, video.id);
+      await prisma.video.update({
+        where: { id: video.id },
+        data: {
+          thumbnailSprite: thumbs.spriteKey,
+          thumbnailVtt: thumbs.vttKey,
+        }
+      });
+    } catch (err) {
+      console.error("Thumbnail generation failed", err);
+    }
   } catch (err) {
     console.error(err)
 
@@ -162,18 +174,14 @@ export async function processVideo(video: Video | null) {
       await fs.promises.rm(hlsDir, { recursive: true, force: true });
     }
   }
-}
 
-// export async function getVideoUrl(key: string) {
-//   const command = new GetObjectCommand({
-//     Bucket: process.env.R2_BUCKET!,
-//     Key: key
-//   });
-//
-//   return await getSignedUrl(s3Client, command, {
-//     expiresIn: 3600
-//   });
-// }
+  await prisma.video.update({
+    where: { id: video.id },
+    data: {
+      validationStatus: ValidationStatus.READY
+    }
+  });
+}
 
 export const videoController = {
   createUploadUrl: async (req: Request, res: Response) => {
@@ -236,6 +244,44 @@ export const videoController = {
       width: video.width,
       height: video.height,
       codec: video.codec,
+      thumbnailVtt: `https://pub-${process.env.R2_PUBLIC}.r2.dev/${video.thumbnailVtt}`,
+      thumbnailSprite: `https://pub-${process.env.R2_PUBLIC}.r2.dev/${video.thumbnailSprite}`,
     });
+  },
+  generateThumbnails: async (inputPath: string, videoId: string) => {
+    const outDir = path.join("uploads", "thumbnails", videoId);
+    await fs.promises.mkdir(outDir, { recursive: true });
+
+    const spritePath = path.join(outDir, "thumbnails.jpg");
+    const vttPath = path.join(outDir, "thumbnails.vtt");
+
+    await new Promise<void>((res, rej) => {
+      ffmpeg(path.resolve(inputPath))
+        .inputOptions([
+          "-ss", "00:00:02",
+          "-protocol_whitelist", "file,http,https,tcp,tls",
+          "-allowed_extensions", "ALL",
+          "-analyzeduration", "100M",
+          "-probesize", "100M"
+        ])
+        .outputOptions([
+          "-vf", "fps=1/2,scale=160:90,tile=5x5",
+          "-frames:v", "25",
+          "-vsync", "vfr"
+        ])
+        .output(spritePath)
+        .on("end", () => res())
+        .on("error", (err) => rej(err))
+        .run();
+    });
+
+    await generateVTT(vttPath);
+    await videoService.uploadFolder(outDir, `hls/${videoId}/thumbnails`);
+    await fs.promises.rm(outDir, { recursive: true, force: true });
+
+    return {
+      spriteKey: `hls/${videoId}/thumbnails/thumbnails.jpg`,
+      vttKey: `hls/${videoId}/thumbnails/thumbnails.vtt`
+    };
   }
 }
